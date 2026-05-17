@@ -12,4 +12,4 @@ A lightweight, zero-dependency Go library for managing internal Public Key Infra
 ## Installation
 
 ```bash
-go get [github.com/dmartsapp/simplepki](https://github.com/dmartsapp/simplepki)
+go get github.com/dmartsapp/simplepki
