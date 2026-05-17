@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+// AssetType represents the identified type of a cryptographic object.
 type AssetType string
 
 const (
@@ -29,11 +30,13 @@ var (
 
 const ()
 
+// SimplePKI holds the RSA key pair used for signing and identification.
 type SimplePKI struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 }
 
+// New creates a new SimplePKI instance with a generated RSA key pair.
 func New(bits int) (*SimplePKI, error) {
 	if priv, err := generateKeyPair(bits); err != nil {
 		return nil, err
@@ -46,14 +49,17 @@ func New(bits int) (*SimplePKI, error) {
 	}
 }
 
+// GetPrivateKey returns the underlying RSA private key.
 func (simplepki *SimplePKI) GetPrivateKey() *rsa.PrivateKey {
 	return simplepki.privateKey
 }
 
+// GetPublicKey returns the underlying RSA public key.
 func (simplepki *SimplePKI) GetPublicKey() *rsa.PublicKey {
 	return simplepki.publicKey
 }
 
+// GenerateCSR creates a raw DER-encoded CSR.
 func (simplepki *SimplePKI) GenerateCSR(commonname string, dnsnames []string) ([]byte, error) {
 	if csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		SignatureAlgorithm: x509.SHA512WithRSA,
@@ -69,6 +75,8 @@ func (simplepki *SimplePKI) GenerateCSR(commonname string, dnsnames []string) ([
 	}
 }
 
+// SignCSR signs a CSR and returns a DER-encoded certificate.
+// If parentCertificate is nil, it self-signs.
 func (simplepki *SimplePKI) SignCSR(csrBytes []byte, notAfterDays int, asCA bool, parentCertificate *x509.Certificate) ([]byte, error) {
 	csr, err := x509.ParseCertificateRequest(csrBytes)
 	if err != nil {
@@ -108,6 +116,7 @@ func (simplepki *SimplePKI) SignCSR(csrBytes []byte, notAfterDays int, asCA bool
 	}
 }
 
+// GetPEM takes an x509 object or raw bytes and returns the PEM-encoded representation.
 func (simplePKI *SimplePKI) GetPEM(x509Object any) ([]byte, error) {
 	var derBytes []byte
 	var err error
