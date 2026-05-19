@@ -13,10 +13,10 @@
 
 ## Installation
 
-Add the module to your Go workspace:
+Add the latest stable module to your Go workspace:
 
 ```bash
-go get [github.com/dmartsapp/simplepki](https://github.com/dmartsapp/simplepki)
+go get github.com/dmartsapp/simplepki@v1.0.2
 ```
 
 ## Core Usage: Generating a CSR
