@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"time"
 )
 
@@ -28,6 +29,27 @@ var (
 	_COUNTRIES  = []string{"CA", "BD", "US", "UK"}
 	_COMMONNAME = "sepcot.dmarts.app"
 )
+
+// CSROptions provides granular control over identity details during CSR construction.
+type CSROptions struct {
+	CommonName   string
+	Organization []string
+	OrgUnit      []string
+	Countries    []string
+	Locality     []string
+	Province     []string
+	DNSNames     []string
+	IPAddresses  []net.IP // Allows direct IP routing validation
+}
+
+// CertificateOptions configures constraints and policies during the signing process.
+type CertificateOptions struct {
+	NotAfterDays       int
+	AsCA               bool
+	MaxPathLen         int                // Only used if AsCA is true. 0 means can only sign leaf certs.
+	ExtKeyUsages       []x509.ExtKeyUsage // e.g., ServerAuth, ClientAuth
+	SignatureAlgorithm x509.SignatureAlgorithm
+}
 
 // SimplePKI holds the RSA key pair used for signing and identification.
 type SimplePKI struct {
@@ -64,25 +86,45 @@ func (simplepki *SimplePKI) GetPublicKey() *rsa.PublicKey {
 	return simplepki.publicKey
 }
 
-// GenerateCSR creates a raw DER-encoded CSR.
-func (simplepki *SimplePKI) GenerateCertificateSigningRequest(commonname string, dnsnames []string) ([]byte, error) {
-	if csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+// GenerateCertificateSigningRequest creates a raw DER-encoded CSR using extensible options.
+func (simplepki *SimplePKI) GenerateCertificateSigningRequest(opts CSROptions) ([]byte, error) {
+	countries := opts.Countries
+	if len(countries) == 0 {
+		countries = _COUNTRIES
+	}
+
+	subject := pkix.Name{
+		Country:      countries,
+		CommonName:   opts.CommonName,
+		Organization: opts.Organization,
+	}
+	if len(opts.OrgUnit) > 0 {
+		subject.OrganizationalUnit = opts.OrgUnit
+	}
+	if len(opts.Locality) > 0 {
+		subject.Locality = opts.Locality
+	}
+	if len(opts.Province) > 0 {
+		subject.Province = opts.Province
+	}
+
+	csrTemplate := &x509.CertificateRequest{
 		SignatureAlgorithm: x509.SHA512WithRSA,
-		Subject: pkix.Name{
-			Country:      _COUNTRIES,
-			CommonName:   commonname,
-			Organization: []string{commonname},
-		},
-		DNSNames: dnsnames}, simplepki.privateKey); err != nil {
+		Subject:            subject,
+		DNSNames:           opts.DNSNames,
+		IPAddresses:        opts.IPAddresses,
+	}
+
+	if csr, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, simplepki.privateKey); err != nil {
 		return nil, err
 	} else {
 		return csr, nil
 	}
 }
 
-// GenerateSignedCertificate signs a CSR and returns a DER-encoded certificate.
-// If parentCertificate is nil, it self-signs and safely caches the certificate.
-func (simplepki *SimplePKI) SignCertificate(csrBytes []byte, notAfterDays int, asCA bool, parentCertificate *x509.Certificate) ([]byte, error) {
+// SignCertificate signs a CSR and returns a DER-encoded certificate utilizing dynamic parameters.
+// If parentCertificate is nil, it runs a self-signed transaction.
+func (simplepki *SimplePKI) SignCertificate(csrBytes []byte, opts CertificateOptions, parentCertificate *x509.Certificate) ([]byte, error) {
 	csr, err := x509.ParseCertificateRequest(csrBytes)
 	if err != nil {
 		return nil, err
@@ -94,43 +136,54 @@ func (simplepki *SimplePKI) SignCertificate(csrBytes []byte, notAfterDays int, a
 		return nil, err
 	}
 
+	// Default to standard Server/Client security patterns if none specified
+	extUsages := opts.ExtKeyUsages
+	if len(extUsages) == 0 {
+		extUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+	}
+
+	sigAlgo := opts.SignatureAlgorithm
+	if sigAlgo == x509.UnknownSignatureAlgorithm {
+		sigAlgo = x509.SHA512WithRSA
+	}
+
 	certTemplate := x509.Certificate{
 		SerialNumber:          serialNumber,
 		Subject:               csr.Subject,
 		NotBefore:             time.Now().Add(-5 * time.Minute),
-		NotAfter:              time.Now().AddDate(0, 0, notAfterDays),
+		NotAfter:              time.Now().AddDate(0, 0, opts.NotAfterDays),
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		ExtKeyUsage:           extUsages,
 		DNSNames:              csr.DNSNames,
+		IPAddresses:           csr.IPAddresses, // Pass through IP SANs claims safely
 		BasicConstraintsValid: true,
-		IsCA:                  asCA,
+		IsCA:                  opts.AsCA,
+		SignatureAlgorithm:    sigAlgo,
 	}
 
-	// Fix validation boundary:
-	// The signing authority parameter (parentCert) must match who owns the signing privateKey.
+	// Manage Path Length Limitations for CA hierarchies
+	if opts.AsCA {
+		certTemplate.MaxPathLen = opts.MaxPathLen
+		certTemplate.MaxPathLenZero = opts.MaxPathLen == 0
+	}
+
 	parentCert := &certTemplate
 	if parentCertificate != nil {
 		parentCert = parentCertificate
-
-		// When working as an intermediate/root CA, the Authority Key ID must
-		// match the CA's Subject Key ID, not the new client certificate's ID.
 		certTemplate.AuthorityKeyId = parentCertificate.SubjectKeyId
 	}
 
 	subjectKeyId := sha1.Sum(x509.MarshalPKCS1PublicKey(csr.PublicKey.(*rsa.PublicKey)))
 	certTemplate.SubjectKeyId = subjectKeyId[:]
-	if asCA {
+	if opts.AsCA {
 		certTemplate.KeyUsage |= x509.KeyUsageCertSign
 	}
 
-	// Signs the template safely utilizing this specific instance's key authority
 	crt, err := x509.CreateCertificate(rand.Reader, &certTemplate, parentCert, csr.PublicKey, simplepki.privateKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Save certificate to state cache if this is a self-signing operation,
-	// or if the public key matches the instance's key pair.
 	csrPubKey, ok := csr.PublicKey.(*rsa.PublicKey)
 	if parentCertificate == nil || (ok && simplepki.publicKey.E == csrPubKey.E && simplepki.publicKey.N.Cmp(csrPubKey.N) == 0) {
 		simplepki.rawCertDER = crt
@@ -247,12 +300,16 @@ func generateKeyPair(bits int) (*rsa.PrivateKey, error) {
 func (simplePKI *SimplePKI) GetTLSConfig() (*tls.Config, error) {
 	var derBytes []byte
 	if len(simplePKI.rawCertDER) == 0 { // cache miss for certificate. generate self-signed cert now
-		csr, err := simplePKI.GenerateCertificateSigningRequest(_COMMONNAME, []string{_COMMONNAME, "localhost"})
+		csr, err := simplePKI.GenerateCertificateSigningRequest(CSROptions{
+			CommonName:  _COMMONNAME,
+			DNSNames:    []string{_COMMONNAME, "localhost"},
+			IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate automatic fallback CSR: %w", err)
 		}
 
-		fallbackCert, err := simplePKI.SignCertificate(csr, 365, false, nil)
+		fallbackCert, err := simplePKI.SignCertificate(csr, CertificateOptions{NotAfterDays: 365}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to auto self-sign fallback cert: %w", err)
 		}
