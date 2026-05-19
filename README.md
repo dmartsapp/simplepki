@@ -1,7 +1,5 @@
 # SimplePKI
 
-# simplepki
-
 `simplepki` is a lightweight, zero-dependency Go library designed to streamline the programmatic generation of RSA keys, X.509 Certificate Signing Requests (CSRs), and signed Certificates (CRTs). It provides native state-caching and an automated self-signed fallback implementation to instantly yield Go-compliant `tls.Config` structures for HTTPS or secure DTLS workloads.
 
 ## Features
