@@ -29,6 +29,8 @@ func main() {
 
 ```bash
 $ openssl req  -in csr -text -noout
+```
+```text
 Certificate Request:
     Data:
         Version: 1 (0x0)
