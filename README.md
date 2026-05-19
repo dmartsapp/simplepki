@@ -1,19 +1,26 @@
 # SimplePKI
 
-A lightweight, zero-dependency Go library for managing internal Public Key Infrastructure (PKI). **SimplePKI** abstracts the complexities of the `crypto/x509` package, allowing you to generate keys, create CSRs, and sign certificates with a single line of code.
+# simplepki
+
+`simplepki` is a lightweight, zero-dependency Go library designed to streamline the programmatic generation of RSA keys, X.509 Certificate Signing Requests (CSRs), and signed Certificates (CRTs). It provides native state-caching and an automated self-signed fallback implementation to instantly yield Go-compliant `tls.Config` structures for HTTPS or secure DTLS workloads.
 
 ## Features
 
-* **Automated PEM Encoding**: Includes a built-in ASN.1 sniffer that automatically identifies and wraps raw DER bytes in the correct PEM headers (`CERTIFICATE`, `PRIVATE KEY`, etc.).
-* **Flexible Signing**: Supports both self-signed certificates and CA-signed hierarchies.
-* **Modern Standards**: Defaults to PKCS#8 for private keys and PKIX for public keys.
-* **Zero Dependencies**: Uses only the Go standard library for maximum security and compatibility.
+- **Extensible CSR Definitions**: Granular control over Subjects, Domain Names, and IP SANs.
+- **Robust Certificate Issuance**: Simple abstraction for self-signed development tokens or structured, hierarchical Certificate Authority chains.
+- **Dynamic Type Detection**: Built-in ASN.1 structural analyzer to safely wrap raw DER arrays into standard PEM memory strings.
+- **State-Aware TLS Provisioning**: Fast caching layer that intercepts configuration setups and auto-provisions structural keys when explicitly declared certificates are missing.
+
+---
 
 ## Installation
 
+Add the module to your Go workspace:
+
 ```bash
-go get github.com/dmartsapp/simplepki
+go get [github.com/dmartsapp/simplepki](https://github.com/dmartsapp/simplepki)
 ```
+
 ## Core Usage: Generating a CSR
 The following example demonstrates how to spin up a 4096-bit cryptographic instance, request explicit Subject claims containing IP SAN definitions, and capture the output as a valid PEM block.
 
