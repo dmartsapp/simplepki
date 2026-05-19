@@ -84,7 +84,8 @@ Certificate Request:
         ...
 ```
 
-## API Reference
+### [!CAUTION] v1.0.3+ has breaking change
+## API Reference (v1.1.0 onwards;)
 ### Struct Configurations
 
 
