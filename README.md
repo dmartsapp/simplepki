@@ -90,7 +90,6 @@ Certificate Request:
 
 #### `CSROptions`
 
-
 Provides configurable properties to dictate identity parameters during request creation:
 
 ```go
@@ -105,10 +104,11 @@ type CSROptions struct {
 	IPAddresses  []net.IP
 }
 ```
-```text
-#### CertificateOptions
-```
+
+#### `CertificateOptions`
+
 Configures validation constraints and cryptographic flags during the signing stage:
+
 ```go
 type CertificateOptions struct {
 	NotAfterDays       int
@@ -120,17 +120,17 @@ type CertificateOptions struct {
 ```
 #### `Methods`
 
-`New(bits int) (*SimplePKI, error)`: Spins up a new instance and provisions an internal key pair.
+- `New(bits int) (*SimplePKI, error)`: Spins up a new instance and provisions an internal key pair.
 
-`SetCertificate(derBytes []byte)`: Caches a pre-signed certificate inside the internal state loop.
+- `SetCertificate(derBytes []byte)`: Caches a pre-signed certificate inside the internal state loop.
 
-`GenerateCertificateSigningRequest(opts CSROptions) ([]byte, error)`: Generates a DER-encoded CSR payload.
+- `GenerateCertificateSigningRequest(opts CSROptions) ([]byte, error)`: Generates a DER-encoded CSR payload.
 
-`SignCertificate(csr []byte, opts CertificateOptions, parent *x509.Certificate) ([]byte, error)`: Signs a CSR into an operational X.509 certificate.
+- `SignCertificate(csr []byte, opts CertificateOptions, parent *x509.Certificate) ([]byte, error)`: Signs a CSR into an operational X.509 certificate.
 
-`GeneratePEM(object any) ([]byte, error)`: Parses raw assets dynamically and wraps them in PEM containers.
+- `GeneratePEM(object any) ([]byte, error)`: Parses raw assets dynamically and wraps them in PEM containers.
 
-`GetTLSConfig() (*tls.Config, error): Returns a validated network-ready tls.Config.`: If no active certificate has been associated, it safely triggers a background self-signing process to ensure secure startup bounds.
+- `GetTLSConfig() (*tls.Config, error): Returns a validated network-ready tls.Config.`: If no active certificate has been associated, it safely triggers a background self-signing process to ensure secure startup bounds.
 
 ### License: 
 #### MIT
