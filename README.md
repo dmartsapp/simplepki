@@ -87,9 +87,9 @@ Certificate Request:
 ## API Reference
 ### Struct Configurations
 
-```text
-#### CSROptions
-```
+
+#### `CSROptions`
+
 
 Provides configurable properties to dictate identity parameters during request creation:
 
@@ -118,34 +118,19 @@ type CertificateOptions struct {
 	SignatureAlgorithm x509.SignatureAlgorithm
 }
 ```
-#### Methods
+#### `Methods`
 
-```go
-New(bits int) (*SimplePKI, error): 
-```
-Spins up a new instance and provisions an internal key pair.
+`New(bits int) (*SimplePKI, error)`: Spins up a new instance and provisions an internal key pair.
 
-```go
-SetCertificate(derBytes []byte): 
-```
-Caches a pre-signed certificate inside the internal state loop.
+`SetCertificate(derBytes []byte)`: Caches a pre-signed certificate inside the internal state loop.
 
-```go
-GenerateCertificateSigningRequest(opts CSROptions) ([]byte, error): 
-```
-Generates a DER-encoded CSR payload.
+`GenerateCertificateSigningRequest(opts CSROptions) ([]byte, error)`: Generates a DER-encoded CSR payload.
 
-```go
-SignCertificate(csr []byte, opts CertificateOptions, parent *x509.Certificate) ([]byte, error): 
-```
-Signs a CSR into an operational X.509 certificate.
+`SignCertificate(csr []byte, opts CertificateOptions, parent *x509.Certificate) ([]byte, error)`: Signs a CSR into an operational X.509 certificate.
 
-```go 
-GeneratePEM(object any) ([]byte, error): 
-```
-Parses raw assets dynamically and wraps them in PEM containers.
+`GeneratePEM(object any) ([]byte, error)`: Parses raw assets dynamically and wraps them in PEM containers.
 
-```go 
-GetTLSConfig() (*tls.Config, error): Returns a validated network-ready tls.Config. 
-``` 
-If no active certificate has been associated, it safely triggers a background self-signing process to ensure secure startup bounds.
+`GetTLSConfig() (*tls.Config, error): Returns a validated network-ready tls.Config.`: If no active certificate has been associated, it safely triggers a background self-signing process to ensure secure startup bounds.
+
+### License: 
+#### MIT
