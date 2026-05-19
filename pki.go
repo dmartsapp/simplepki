@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -28,12 +29,11 @@ var (
 	_COMMONNAME = "sepcot.dmarts.app"
 )
 
-const ()
-
 // SimplePKI holds the RSA key pair used for signing and identification.
 type SimplePKI struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
+	rawCertDER []byte // cache the current certificate DER
 }
 
 // New creates a new SimplePKI instance with a generated RSA key pair.
@@ -49,6 +49,11 @@ func New(bits int) (*SimplePKI, error) {
 	}
 }
 
+// SetCertificate explicitly associates a pre-signed DER cert with this instance.
+func (simplepki *SimplePKI) SetCertificate(derBytes []byte) {
+	simplepki.rawCertDER = derBytes
+}
+
 // GetPrivateKey returns the underlying RSA private key.
 func (simplepki *SimplePKI) GetPrivateKey() *rsa.PrivateKey {
 	return simplepki.privateKey
@@ -60,7 +65,7 @@ func (simplepki *SimplePKI) GetPublicKey() *rsa.PublicKey {
 }
 
 // GenerateCSR creates a raw DER-encoded CSR.
-func (simplepki *SimplePKI) GenerateCSR(commonname string, dnsnames []string) ([]byte, error) {
+func (simplepki *SimplePKI) GenerateCertificateSigningRequest(commonname string, dnsnames []string) ([]byte, error) {
 	if csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		SignatureAlgorithm: x509.SHA512WithRSA,
 		Subject: pkix.Name{
@@ -75,9 +80,9 @@ func (simplepki *SimplePKI) GenerateCSR(commonname string, dnsnames []string) ([
 	}
 }
 
-// SignCSR signs a CSR and returns a DER-encoded certificate.
-// If parentCertificate is nil, it self-signs.
-func (simplepki *SimplePKI) SignCSR(csrBytes []byte, notAfterDays int, asCA bool, parentCertificate *x509.Certificate) ([]byte, error) {
+// GenerateSignedCertificate signs a CSR and returns a DER-encoded certificate.
+// If parentCertificate is nil, it self-signs and safely caches the certificate.
+func (simplepki *SimplePKI) SignCertificate(csrBytes []byte, notAfterDays int, asCA bool, parentCertificate *x509.Certificate) ([]byte, error) {
 	csr, err := x509.ParseCertificateRequest(csrBytes)
 	if err != nil {
 		return nil, err
@@ -100,24 +105,41 @@ func (simplepki *SimplePKI) SignCSR(csrBytes []byte, notAfterDays int, asCA bool
 		BasicConstraintsValid: true,
 		IsCA:                  asCA,
 	}
+
+	// Fix validation boundary:
+	// The signing authority parameter (parentCert) must match who owns the signing privateKey.
 	parentCert := &certTemplate
 	if parentCertificate != nil {
 		parentCert = parentCertificate
+
+		// When working as an intermediate/root CA, the Authority Key ID must
+		// match the CA's Subject Key ID, not the new client certificate's ID.
+		certTemplate.AuthorityKeyId = parentCertificate.SubjectKeyId
 	}
+
 	subjectKeyId := sha1.Sum(x509.MarshalPKCS1PublicKey(csr.PublicKey.(*rsa.PublicKey)))
 	certTemplate.SubjectKeyId = subjectKeyId[:]
 	if asCA {
 		certTemplate.KeyUsage |= x509.KeyUsageCertSign
 	}
-	if crt, err := x509.CreateCertificate(rand.Reader, &certTemplate, parentCert, csr.PublicKey, simplepki.privateKey); err != nil {
+
+	// Signs the template safely utilizing this specific instance's key authority
+	crt, err := x509.CreateCertificate(rand.Reader, &certTemplate, parentCert, csr.PublicKey, simplepki.privateKey)
+	if err != nil {
 		return nil, err
-	} else {
-		return crt, nil
 	}
+
+	// Save certificate to state cache if this is a self-signing operation,
+	// or if the public key matches the instance's key pair.
+	csrPubKey, ok := csr.PublicKey.(*rsa.PublicKey)
+	if parentCertificate == nil || (ok && simplepki.publicKey.E == csrPubKey.E && simplepki.publicKey.N.Cmp(csrPubKey.N) == 0) {
+		simplepki.rawCertDER = crt
+	}
+	return crt, nil
 }
 
 // GetPEM takes an x509 object or raw bytes and returns the PEM-encoded representation.
-func (simplePKI *SimplePKI) GetPEM(x509Object any) ([]byte, error) {
+func (simplePKI *SimplePKI) GeneratePEM(x509Object any) ([]byte, error) {
 	var derBytes []byte
 	var err error
 	switch v := x509Object.(type) {
@@ -154,7 +176,6 @@ func (simplePKI *SimplePKI) GetPEM(x509Object any) ([]byte, error) {
 		return nil, fmt.Errorf("invalid file format: missing root sequence tag")
 	}
 
-	// 1. Calculate past the outer envelope length
 	var innerIdx int
 	if derBytes[1] == 0x82 {
 		innerIdx = 4
@@ -166,10 +187,7 @@ func (simplePKI *SimplePKI) GetPEM(x509Object any) ([]byte, error) {
 
 	detectedType := "UNKNOWN"
 
-	// 2. Evaluate Layer 2 Container Types
 	if derBytes[innerIdx] == 0x30 {
-		// Both Public Keys and Certificates pass through this branch.
-		// Skip past this second inner sequence's length bytes to inspect Layer 3.
 		var layer3Idx int
 		if derBytes[innerIdx+1] == 0x82 {
 			layer3Idx = innerIdx + 4
@@ -182,28 +200,20 @@ func (simplePKI *SimplePKI) GetPEM(x509Object any) ([]byte, error) {
 		if layer3Idx < len(derBytes) {
 			switch derBytes[layer3Idx] {
 			case 0x02:
-				// If it's an integer block at Layer 3, we look for the CSR signature (0x02 0x01 0x00)
 				if layer3Idx+2 < len(derBytes) && derBytes[layer3Idx+1] == 0x01 && derBytes[layer3Idx+2] == 0x00 {
 					detectedType = "CERTIFICATE REQUEST"
 				} else {
 					detectedType = "CERTIFICATE"
 				}
 			case 0xA0:
-				// 0xA0 is an ASN.1 Explicit Tag [0].
-				// Modern X.509 v3 certificates open their TBSCertificate with this exact tag to flag the version context.
 				detectedType = "CERTIFICATE"
 			case 0x30:
-				// If it embeds yet another sequence layer, it's the algorithm wrapper of a Public Key
 				detectedType = "PUBLIC KEY"
 			default:
-				// Fallback context: Default to Public Key if standard certificate markers are absent
 				detectedType = "PUBLIC KEY"
 			}
 		}
-
-		type Fork0x02 struct{} // Label marker block
 	} else if derBytes[innerIdx] == 0x02 {
-		// Private keys and un-nested blocks open directly with an integer flag
 		if innerIdx+2 < len(derBytes) && derBytes[innerIdx+1] == 0x01 && derBytes[innerIdx+2] == 0x00 {
 			detectedType = "PRIVATE KEY"
 		} else {
@@ -229,5 +239,42 @@ func generateKeyPair(bits int) (*rsa.PrivateKey, error) {
 		return nil, err
 	} else {
 		return privkey, nil
+	}
+}
+
+// GetTLSConfig returns a standard Go tls.Config.
+// If no external certificate was set via a CA signing operation, it automatically self-signs.
+func (simplePKI *SimplePKI) GetTLSConfig() (*tls.Config, error) {
+	var derBytes []byte
+	if len(simplePKI.rawCertDER) == 0 { // cache miss for certificate. generate self-signed cert now
+		csr, err := simplePKI.GenerateCertificateSigningRequest(_COMMONNAME, []string{_COMMONNAME, "localhost"})
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate automatic fallback CSR: %w", err)
+		}
+
+		fallbackCert, err := simplePKI.SignCertificate(csr, 365, false, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to auto self-sign fallback cert: %w", err)
+		}
+		derBytes = fallbackCert
+	} else {
+		derBytes = simplePKI.rawCertDER
+	}
+
+	keyPEMblock, err := simplePKI.GeneratePEM(simplePKI.privateKey)
+	if err != nil {
+		return nil, err
+	}
+	certPEMblock, err := simplePKI.GeneratePEM(derBytes)
+	if err != nil {
+		return nil, err
+	}
+	if tlskeypair, err := tls.X509KeyPair(certPEMblock, keyPEMblock); err != nil {
+		return nil, fmt.Errorf("failed parsing PEM pairs to tls.X509KeyPair: %w", err)
+	} else {
+		config := tls.Config{
+			Certificates: []tls.Certificate{tlskeypair},
+		}
+		return &config, nil
 	}
 }
